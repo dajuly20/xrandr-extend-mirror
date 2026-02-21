@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Display Mirror & Extend
+Comment=Mirror or extend displays graphically
+Exec=/home/julian/Dokumente/GitProjects/xrandr-extend-mirror/xrandr-gui.py
+Icon=preferences-desktop-display
+Terminal=false
+Type=Application
+Categories=Settings;HardwareSettings;
+Keywords=display;monitor;screen;mirror;extend;xrandr;

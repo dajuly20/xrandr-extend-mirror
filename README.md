@@ -97,6 +97,170 @@ alias screen-layout='/path/to/xrandr-extend-mirror.sh layout'
 - `xrandr` (usually pre-installed)
 - Bash 4+ (for associative arrays)
 
+---
+
+## GUI-Version (xrandr-gui.py)
+
+Zusätzlich zum Bash-Skript gibt es eine grafische Oberfläche, die das Verwalten von Bildschirmen noch einfacher macht.
+
+### Installation der GUI
+
+```bash
+# Python 3 und GTK3 werden benötigt
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0
+
+# GUI starten
+./xrandr-gui.py
+
+# Oder mit Desktop-Integration
+cp xrandr-gui.desktop ~/.local/share/applications/
+```
+
+### Grundkonzept: Source und Target
+
+Die GUI arbeitet mit zwei Bildschirmen, die du auswählen musst:
+
+| Begriff | Bedeutung | Farbe in der GUI |
+|---------|-----------|------------------|
+| **Source** (Quelle) | Der "Referenz-Bildschirm" - an diesem orientiert sich die Positionierung | Blau |
+| **Target** (Ziel) | Der Bildschirm, der gespiegelt oder verschoben wird | Orange |
+
+**Wichtig**: Die Reihenfolge, in der du die Bildschirme auswählst, bestimmt Source und Target!
+- **Erster Klick** = Source
+- **Zweiter Klick** = Target
+
+### Bedienung der GUI
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Display Configuration                              [⟳]      │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐             │
+│   │  eDP-1   │    │ HDMI-1   │    │ DP-1     │             │
+│   │1920x1080 │    │1920x1080 │    │2560x1440 │             │
+│   │  SOURCE  │    │  TARGET  │    │          │             │
+│   └──────────┘    └──────────┘    └──────────┘             │
+│                                                             │
+├─────────────────────────────────────────────────────────────┤
+│ Selection:  eDP-1 (1920x1080)  →  HDMI-1 (1920x1080)       │
+├─────────────────────────────────────────────────────────────┤
+│ [Mirror Displays] [Extend →] [Extend ←] [Clear Selection]  │
+├─────────────────────────────────────────────────────────────┤
+│ Resolution: [1920x1080 ▼]    Refresh Rate: [60.00 ▼]       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+1. **Bildschirme werden automatisch erkannt** und als Monitor-Icons angezeigt
+2. **Klicke auf den ersten Bildschirm** → wird zum Source (blau)
+3. **Klicke auf den zweiten Bildschirm** → wird zum Target (orange)
+4. **Wähle eine Aktion** (siehe unten)
+
+### Die vier Aktionen erklärt
+
+#### 1. Mirror Displays (Spiegeln)
+```
+Vorher:                          Nachher:
+┌───────┐ ┌───────┐              ┌───────────────┐
+│   A   │ │   B   │      →       │   A = B       │
+└───────┘ └───────┘              │ (gleiches Bild)
+                                 └───────────────┘
+```
+- Der Target-Bildschirm zeigt exakt das gleiche Bild wie der Source
+- Beide Bildschirme bekommen dieselben Koordinaten (x=0, y=0)
+- **Hinweis**: Das ist der Grund für "Überlappung" - technisch korrekt, da beide dasselbe anzeigen sollen
+
+#### 2. Extend → (Target rechts von Source)
+```
+Vorher (überlappend):            Nachher:
+┌───────────────┐                ┌───────┐┌───────┐
+│   A + B       │        →       │   A   ││   B   │
+│ (überlappt!)  │                │Source ││Target │
+└───────────────┘                └───────┘└───────┘
+```
+- Platziert den Target-Bildschirm **rechts** neben den Source
+- Behebt Überlappungen!
+
+#### 3. Extend ← (Target links von Source)
+```
+Vorher (überlappend):            Nachher:
+┌───────────────┐                ┌───────┐┌───────┐
+│   A + B       │        →       │   B   ││   A   │
+│ (überlappt!)  │                │Target ││Source │
+└───────────────┘                └───────┘└───────┘
+```
+- Platziert den Target-Bildschirm **links** neben den Source
+- Auch hier werden Überlappungen behoben!
+
+#### 4. Clear Selection (Auswahl löschen)
+- Setzt Source und Target zurück
+- Erlaubt eine neue Auswahl
+
+### Häufige Probleme und Lösungen
+
+#### Problem: Bildschirme überlappen sich!
+
+**Ursache**: Beide Bildschirme haben dieselben Koordinaten (z.B. beide bei x=0, y=0). Das passiert nach dem Spiegeln oder bei falscher Konfiguration.
+
+**Lösung**:
+1. Öffne die GUI
+2. Wähle den **Hauptbildschirm als Source** (erster Klick)
+3. Wähle den **überlappenden Bildschirm als Target** (zweiter Klick)
+4. Klicke auf **"Extend →"** oder **"Extend ←"** je nachdem, wo der Bildschirm hin soll
+
+#### Problem: Falsche Reihenfolge der Bildschirme
+
+**Du willst**: Laptop links, externer Monitor rechts
+
+| Schritt | Aktion |
+|---------|--------|
+| 1 | Klicke auf den **Laptop-Bildschirm** (wird Source) |
+| 2 | Klicke auf den **externen Monitor** (wird Target) |
+| 3 | Klicke auf **"Extend →"** (Target = extern → rechts von Source = Laptop) |
+
+**Du willst**: Externer Monitor links, Laptop rechts
+
+| Schritt | Aktion |
+|---------|--------|
+| 1 | Klicke auf den **Laptop-Bildschirm** (wird Source) |
+| 2 | Klicke auf den **externen Monitor** (wird Target) |
+| 3 | Klicke auf **"Extend ←"** (Target = extern → links von Source = Laptop) |
+
+**Alternative**: Tausche einfach Source und Target!
+| Schritt | Aktion |
+|---------|--------|
+| 1 | Klicke auf den **externen Monitor** (wird Source) |
+| 2 | Klicke auf den **Laptop-Bildschirm** (wird Target) |
+| 3 | Klicke auf **"Extend →"** (Target = Laptop → rechts von Source = extern) |
+
+### Optionen
+
+- **Resolution**: Wähle die Auflösung für die Mirror/Extend-Operation
+- **Refresh Rate**: Bildwiederholrate (60Hz für normale Monitore, 30Hz für einige TVs)
+
+### Technische Details
+
+Die GUI führt folgende xrandr-Befehle aus:
+
+```bash
+# Mirror
+xrandr --output TARGET --same-as SOURCE --mode 1920x1080 --rate 60.00
+
+# Extend rechts
+xrandr --auto --output TARGET --mode 1920x1080 --rate 60.00 --right-of SOURCE
+
+# Extend links
+xrandr --auto --output TARGET --mode 1920x1080 --rate 60.00 --left-of SOURCE
+```
+
+### Tipps
+
+1. **Nach dem Spiegeln wieder erweitern**: Wenn du gespiegelt hast und wieder separate Bildschirme willst, benutze "Extend →" oder "Extend ←"
+
+2. **Falsch geklickt?** Klicke nochmal auf einen ausgewählten Bildschirm, um ihn abzuwählen, oder benutze "Clear Selection"
+
+3. **Refresh-Button**: Wenn ein Bildschirm nicht angezeigt wird (z.B. nach dem Anstecken), klicke auf ⟳
+
 ## License
 
 MIT
