@@ -233,6 +233,47 @@ Vorher (überlappend):            Nachher:
 | 2 | Klicke auf den **Laptop-Bildschirm** (wird Target) |
 | 3 | Klicke auf **"Extend →"** (Target = Laptop → rechts von Source = extern) |
 
+### Drag & Drop Layout
+
+Die GUI unterstützt Drag & Drop für eine intuitive Bildschirm-Anordnung:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐             │
+│   │  eDP-1   │    │ HDMI-1   │    │ DP-1     │             │
+│   │1920x1080 │    │1920x1080 │    │2560x1440 │  ← Drag me! │
+│   └──────────┘    └──────────┘    └──────────┘             │
+│                                                             │
+│  Layout: [Drag displays to arrange]         [Apply Layout] │
+└─────────────────────────────────────────────────────────────┘
+```
+
+1. **Ziehe einen Bildschirm** mit der Maus an die gewünschte Position
+2. **Automatisches Einrasten**: Der Bildschirm rastet an Kanten anderer Bildschirme ein (rechts, links, oben, unten)
+3. **Gelber Punkt**: Zeigt an, dass ungespeicherte Änderungen vorhanden sind
+4. **"Apply Layout"**: Wendet alle Änderungen per xrandr an
+
+**Wichtig**: Bildschirme können sich nicht überlappen - sie rasten immer an Kanten ein!
+
+### Gespiegelte Bildschirme erkennen
+
+Gespiegelte Bildschirme werden automatisch erkannt und besonders dargestellt:
+
+```
+┌──────────────────┐
+│   eDP-1          │
+│   1920x1080      │    ← Lila = gespiegelt
+│   MIRRORED       │
+│   = HDMI-1       │    ← zeigt welche Displays gespiegelt sind
+└──────────────────┘
+```
+
+- **Lila Farbe**: Kennzeichnet gespiegelte Displays
+- **"MIRRORED"**: Label für gespiegelte Bildschirme
+- **"= HDMI-1"**: Zeigt an, mit welchem Display gespiegelt wird
+- **"Unlink Mirrored"**: Button zum Aufheben der Spiegelung
+
 ### Optionen
 
 - **Resolution**: Wähle die Auflösung für die Mirror/Extend-Operation
@@ -260,6 +301,26 @@ xrandr --auto --output TARGET --mode 1920x1080 --rate 60.00 --left-of SOURCE
 2. **Falsch geklickt?** Klicke nochmal auf einen ausgewählten Bildschirm, um ihn abzuwählen, oder benutze "Clear Selection"
 
 3. **Refresh-Button**: Wenn ein Bildschirm nicht angezeigt wird (z.B. nach dem Anstecken), klicke auf ⟳
+
+## Ähnliche Tools
+
+Es gibt bereits ähnliche Tools für Display-Management unter Linux:
+
+| Tool | Verfügbarkeit | Beschreibung |
+|------|---------------|--------------|
+| **[ARandR](https://christian.amsuess.com/tools/arandr/)** | `apt install arandr` | Die bekannteste xrandr-GUI mit Drag&Drop |
+| **wdisplays** | Wayland | Für wlroots-Compositors |
+| **nwg-displays** | Wayland | Für Sway/Hyprland |
+| **dippi** | `snap install dippi` | Berechnet DPI und Seitenverhältnis |
+
+### Unterschiede zu ARandR
+
+Dieses Tool bietet einige Vorteile gegenüber ARandR:
+
+- **Source/Target-Workflow**: Einfaches Spiegeln/Erweitern durch Auswahl von zwei Displays
+- **Erkennung gespiegelter Displays**: Visuelle Darstellung (lila) wenn Displays gespiegelt sind
+- **Integrierter Unlink-Button**: Schnelles Aufheben der Spiegelung
+- **Kombiniert CLI + GUI**: Bash-Skript für schnelle Terminal-Nutzung, GUI für visuelle Konfiguration
 
 ## License
 

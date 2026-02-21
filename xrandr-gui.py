@@ -31,13 +31,22 @@ class Display:
 class DisplayWidget(Gtk.DrawingArea):
     """A widget that draws a visual representation of a display."""
 
-    def __init__(self, display: Display, scale: float = 0.08):
+    def __init__(self, display: Display, scale: float = 0.08, gui=None):
         super().__init__()
         self.display = display
         self.scale = scale
         self.selected = False
         self.is_source = False
         self.is_target = False
+        self.gui = gui  # Reference to XrandrGUI for drag operations
+
+        # Drag state
+        self.dragging = False
+        self.drag_offset_x = 0
+        self.drag_offset_y = 0
+        self.has_pending_changes = False
+        self.is_mirrored = False  # Part of a mirrored group
+        self.mirrored_with = []  # Names of displays this is mirrored with
 
         # Set size based on display resolution
         self.set_size_request(
@@ -46,7 +55,16 @@ class DisplayWidget(Gtk.DrawingArea):
         )
 
         self.connect('draw', self.on_draw)
-        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+        self.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK |
+            Gdk.EventMask.BUTTON_RELEASE_MASK |
+            Gdk.EventMask.POINTER_MOTION_MASK
+        )
+
+        # Connect drag event handlers
+        self.connect('button-press-event', self.on_button_press)
+        self.connect('button-release-event', self.on_button_release)
+        self.connect('motion-notify-event', self.on_motion_notify)
 
     def on_draw(self, widget, cr):
         """Draw the display representation."""
@@ -55,7 +73,9 @@ class DisplayWidget(Gtk.DrawingArea):
         height = allocation.height
 
         # Background color based on state
-        if self.is_source:
+        if self.is_mirrored:
+            cr.set_source_rgb(0.6, 0.3, 0.6)  # Purple for mirrored
+        elif self.is_source:
             cr.set_source_rgb(0.2, 0.6, 0.9)  # Blue for source
         elif self.is_target:
             cr.set_source_rgb(0.9, 0.5, 0.2)  # Orange for target
@@ -124,7 +144,10 @@ class DisplayWidget(Gtk.DrawingArea):
         cr.show_text(res_text)
 
         # Draw mode indicator
-        if self.is_source:
+        if self.is_mirrored:
+            cr.set_source_rgb(0.9, 0.6, 0.9)
+            mode_text = "MIRRORED"
+        elif self.is_source:
             cr.set_source_rgb(0.4, 0.8, 1)
             mode_text = "SOURCE"
         elif self.is_target:
@@ -139,7 +162,73 @@ class DisplayWidget(Gtk.DrawingArea):
             cr.move_to((width - extents.width) / 2, screen_y + screen_h - 8)
             cr.show_text(mode_text)
 
+        # Draw mirrored-with indicator
+        if self.is_mirrored and self.mirrored_with:
+            cr.set_font_size(8)
+            cr.set_source_rgb(0.8, 0.8, 0.8)
+            mirror_text = f"= {', '.join(self.mirrored_with)}"
+            extents = cr.text_extents(mirror_text)
+            cr.move_to((width - extents.width) / 2, screen_y + screen_h - 20)
+            cr.show_text(mirror_text)
+
+        # Draw "pending changes" indicator
+        if self.has_pending_changes:
+            cr.set_source_rgb(1, 0.8, 0.2)  # Yellow indicator
+            cr.arc(width - 10, 10, 5, 0, 2 * 3.14159)
+            cr.fill()
+
         return False
+
+    def on_button_press(self, widget, event):
+        """Handle button press for drag initiation."""
+        if event.button == 1:  # Left mouse button
+            self.dragging = True
+            # Calculate offset from widget origin to click position
+            self.drag_offset_x = event.x
+            self.drag_offset_y = event.y
+            # Change cursor to indicate dragging
+            cursor = Gdk.Cursor.new_from_name(self.get_display(), "grabbing")
+            self.get_window().set_cursor(cursor)
+        return False  # Allow event to propagate for selection handling
+
+    def on_button_release(self, widget, event):
+        """Handle button release to end drag and snap to position."""
+        if self.dragging and event.button == 1:
+            self.dragging = False
+            # Reset cursor
+            self.get_window().set_cursor(None)
+
+            if self.gui:
+                # Get current widget position in container
+                container = self.get_parent()
+                if isinstance(container, Gtk.Fixed):
+                    # Snap to nearest display edge
+                    self.gui.snap_widget_position(self)
+
+        return False
+
+    def on_motion_notify(self, widget, event):
+        """Handle mouse motion for dragging."""
+        if self.dragging and self.gui:
+            container = self.get_parent()
+            if isinstance(container, Gtk.Fixed):
+                # Calculate new position
+                # Get widget's current position in the container
+                alloc = self.get_allocation()
+                parent_alloc = container.get_allocation()
+
+                # Convert event coords to container coords
+                new_x = alloc.x + event.x - self.drag_offset_x
+                new_y = alloc.y + event.y - self.drag_offset_y
+
+                # Clamp to container bounds
+                new_x = max(0, min(new_x, parent_alloc.width - alloc.width))
+                new_y = max(0, min(new_y, parent_alloc.height - alloc.height))
+
+                # Move widget
+                container.move(self, int(new_x), int(new_y))
+
+        return True
 
 
 class XrandrGUI(Gtk.Window):
@@ -154,6 +243,7 @@ class XrandrGUI(Gtk.Window):
         self.display_widgets = {}
         self.source_display = None
         self.target_display = None
+        self.pending_layout_changes = {}  # {display_name: (relative_to, direction)}
 
         self.setup_ui()
         self.refresh_displays()
@@ -268,6 +358,34 @@ class XrandrGUI(Gtk.Window):
         clear_btn = Gtk.Button(label="Clear Selection")
         clear_btn.connect("clicked", self.on_clear_clicked)
         action_box.pack_start(clear_btn, True, True, 0)
+
+        # Layout action row
+        layout_frame = Gtk.Frame(label="Layout")
+        main_box.pack_start(layout_frame, False, False, 0)
+
+        layout_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        layout_box.set_border_width(10)
+        layout_frame.add(layout_box)
+
+        layout_info = Gtk.Label()
+        layout_info.set_markup("<span size='small'>Drag displays to arrange them. Changes are applied when you click 'Apply Layout'.</span>")
+        layout_info.set_xalign(0)
+        layout_box.pack_start(layout_info, True, True, 0)
+
+        # Apply Layout button
+        self.apply_layout_btn = Gtk.Button(label="Apply Layout")
+        self.apply_layout_btn.get_style_context().add_class("suggested-action")
+        self.apply_layout_btn.connect("clicked", self.on_apply_layout_clicked)
+        self.apply_layout_btn.set_sensitive(False)
+        self.apply_layout_btn.set_tooltip_text("Apply the new display arrangement")
+        layout_box.pack_end(self.apply_layout_btn, False, False, 0)
+
+        # Unlink mirrored button (for un-mirroring displays)
+        self.unlink_mirror_btn = Gtk.Button(label="Unlink Mirrored")
+        self.unlink_mirror_btn.connect("clicked", self.on_unlink_mirror_clicked)
+        self.unlink_mirror_btn.set_sensitive(False)
+        self.unlink_mirror_btn.set_tooltip_text("Separate mirrored displays")
+        layout_box.pack_end(self.unlink_mirror_btn, False, False, 0)
 
         # Resolution options
         options_frame = Gtk.Frame(label="Options")
@@ -416,7 +534,7 @@ class XrandrGUI(Gtk.Window):
 
         # Create widgets for each display
         for i, display in enumerate(self.displays):
-            widget = DisplayWidget(display, scale)
+            widget = DisplayWidget(display, scale, gui=self)
             widget.connect("button-press-event", self.on_display_clicked, display)
 
             # Position based on actual display position
@@ -425,6 +543,26 @@ class XrandrGUI(Gtk.Window):
 
             self.display_container.put(widget, x_pos, y_pos)
             self.display_widgets[display.name] = widget
+
+        # Detect and mark mirrored displays (same position)
+        mirrored_groups = self._find_mirrored_display_groups()
+        has_mirrored = False
+        for group in mirrored_groups:
+            if len(group) > 1:
+                has_mirrored = True
+                for display_name in group:
+                    widget = self.display_widgets.get(display_name)
+                    if widget:
+                        widget.is_mirrored = True
+                        widget.mirrored_with = [n for n in group if n != display_name]
+                        widget.queue_draw()
+
+        # Enable/disable unlink button
+        self.unlink_mirror_btn.set_sensitive(has_mirrored)
+
+        # Clear pending changes on refresh
+        self.pending_layout_changes.clear()
+        self.apply_layout_btn.set_sensitive(False)
 
         # Update mode combo with common resolutions
         self.mode_combo.remove_all()
@@ -560,6 +698,182 @@ class XrandrGUI(Gtk.Window):
                '--mode', mode, '--rate', rate, '--left-of', source]
 
         self.run_xrandr_command(cmd, f"Extending {target} to the left of {source}")
+
+    def snap_widget_position(self, dragged_widget):
+        """Snap a dragged widget to the nearest display edge."""
+        container = self.display_container
+        dragged_alloc = dragged_widget.get_allocation()
+        dragged_display = dragged_widget.display
+
+        # Get positions of all other widgets
+        best_snap = None
+        min_distance = float('inf')
+        snap_threshold = 50  # Pixels
+
+        for name, widget in self.display_widgets.items():
+            if name == dragged_display.name:
+                continue
+
+            other_alloc = widget.get_allocation()
+            other_display = widget.display
+
+            # Check all four snap positions (right-of, left-of, above, below)
+            snap_positions = [
+                # Right of other display
+                ('right-of', other_alloc.x + other_alloc.width, other_alloc.y),
+                # Left of other display
+                ('left-of', other_alloc.x - dragged_alloc.width, other_alloc.y),
+                # Above other display
+                ('above', other_alloc.x, other_alloc.y - dragged_alloc.height),
+                # Below other display
+                ('below', other_alloc.x, other_alloc.y + other_alloc.height),
+            ]
+
+            for direction, snap_x, snap_y in snap_positions:
+                # Calculate distance from current position to snap position
+                dx = dragged_alloc.x - snap_x
+                dy = dragged_alloc.y - snap_y
+                distance = (dx * dx + dy * dy) ** 0.5
+
+                if distance < min_distance and distance < snap_threshold * 3:
+                    min_distance = distance
+                    best_snap = (snap_x, snap_y, other_display.name, direction)
+
+        if best_snap:
+            snap_x, snap_y, relative_to, direction = best_snap
+
+            # Check for overlap with any display at snap position
+            if not self._would_overlap(dragged_widget, snap_x, snap_y):
+                # Move widget to snap position
+                container.move(dragged_widget, int(snap_x), int(snap_y))
+
+                # Record pending change
+                self.pending_layout_changes[dragged_display.name] = (relative_to, direction)
+                dragged_widget.has_pending_changes = True
+                dragged_widget.queue_draw()
+
+                # Enable apply button
+                self.apply_layout_btn.set_sensitive(True)
+                self.show_status(f"Snapped {dragged_display.name} {direction} {relative_to}")
+        else:
+            # No valid snap - revert to original position or find safe position
+            self._find_non_overlapping_position(dragged_widget)
+
+    def _would_overlap(self, dragged_widget, new_x, new_y):
+        """Check if placing widget at position would overlap other displays."""
+        dragged_alloc = dragged_widget.get_allocation()
+        dragged_name = dragged_widget.display.name
+
+        for name, widget in self.display_widgets.items():
+            if name == dragged_name:
+                continue
+
+            other_alloc = widget.get_allocation()
+
+            # Check rectangle intersection
+            if (new_x < other_alloc.x + other_alloc.width and
+                new_x + dragged_alloc.width > other_alloc.x and
+                new_y < other_alloc.y + other_alloc.height and
+                new_y + dragged_alloc.height > other_alloc.y):
+                return True
+
+        return False
+
+    def _find_non_overlapping_position(self, widget):
+        """Find a non-overlapping position for the widget."""
+        container = self.display_container
+        alloc = widget.get_allocation()
+
+        # Try positions around the container
+        test_positions = [(20, 20), (200, 20), (400, 20), (20, 150), (200, 150)]
+
+        for x, y in test_positions:
+            if not self._would_overlap(widget, x, y):
+                container.move(widget, x, y)
+                return
+
+    def on_apply_layout_clicked(self, button):
+        """Apply all pending layout changes."""
+        if not self.pending_layout_changes:
+            return
+
+        success_count = 0
+        for display_name, (relative_to, direction) in self.pending_layout_changes.items():
+            cmd = ['xrandr', '--output', display_name, f'--{direction}', relative_to]
+
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    success_count += 1
+                else:
+                    error = result.stderr.strip() or "Unknown error"
+                    self.show_status(f"Failed to position {display_name}: {error}")
+            except Exception as e:
+                self.show_status(f"Error positioning {display_name}: {e}")
+
+        if success_count > 0:
+            self.show_status(f"Applied {success_count} layout change(s)")
+
+        # Clear pending changes
+        self.pending_layout_changes.clear()
+        for widget in self.display_widgets.values():
+            widget.has_pending_changes = False
+            widget.queue_draw()
+        self.apply_layout_btn.set_sensitive(False)
+
+        # Refresh display
+        GLib.timeout_add(500, self.refresh_displays)
+
+    def on_unlink_mirror_clicked(self, button):
+        """Unlink mirrored displays."""
+        mirrored_groups = self._find_mirrored_displays()
+        if not mirrored_groups:
+            self.show_status("No mirrored displays found")
+            return
+
+        # Unlink all mirrored displays by placing them side by side
+        commands = []
+        x_offset = 0
+        for i, display in enumerate(self.displays):
+            # Position each display in sequence
+            if i == 0:
+                cmd = ['xrandr', '--output', display.name, '--pos', '0x0']
+            else:
+                prev_display = self.displays[i - 1]
+                cmd = ['xrandr', '--output', display.name, '--right-of', prev_display.name]
+            commands.append((cmd, display.name))
+
+        for cmd, name in commands:
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    self.show_status(f"Failed to unlink {name}")
+            except Exception as e:
+                self.show_status(f"Error unlinking {name}: {e}")
+
+        self.show_status("Unlinked mirrored displays")
+        self.unlink_mirror_btn.set_sensitive(False)
+        GLib.timeout_add(500, self.refresh_displays)
+
+    def _find_mirrored_displays(self):
+        """Find displays that are mirrored (same position)."""
+        mirrored = []
+        for group in self._find_mirrored_display_groups():
+            if len(group) > 1:
+                mirrored.extend(group)
+        return mirrored
+
+    def _find_mirrored_display_groups(self):
+        """Find groups of displays that are mirrored (same position)."""
+        position_groups = {}
+
+        for display in self.displays:
+            pos = (display.x, display.y)
+            if pos not in position_groups:
+                position_groups[pos] = []
+            position_groups[pos].append(display.name)
+
+        return list(position_groups.values())
 
     def run_xrandr_command(self, cmd, description):
         """Run an xrandr command and show result."""
